@@ -1,0 +1,27 @@
+# Dependências
+node_modules/
+
+# Variáveis de ambiente (contêm senhas e chaves — NUNCA commitar)
+.env
+.env.*
+!.env.example
+
+# Backups do banco (gerados automaticamente)
+backups/
+
+# Build do frontend
+frontend/dist/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# PlatformIO / Arduino
+firmware/.pio/
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+*.log

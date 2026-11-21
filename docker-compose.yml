@@ -1,0 +1,20 @@
+# Sobe o PostgreSQL localmente: docker compose up -d
+# As credenciais vêm do arquivo .env na raiz do repositório (copie de backend/.env.example).
+services:
+  db:
+    image: postgres:16
+    container_name: pi_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-pi_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-troque_esta_senha}
+      POSTGRES_DB: ${DB_NAME:-projeto_integrador}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Na primeira inicialização, o Postgres executa este script e cria as tabelas
+      - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+
+volumes:
+  pgdata:
