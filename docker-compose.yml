@@ -1,6 +1,10 @@
-# Sobe o PostgreSQL localmente: docker compose up -d
-# As credenciais vêm do arquivo .env na raiz do repositório (copie de backend/.env.example).
+# Sobe os bancos de dados: docker compose up -d   (rodar na raiz do repositório)
+# As credenciais vêm do arquivo .env na raiz (copie de backend/.env.example).
+#
+# As portas são publicadas só em 127.0.0.1: os bancos ficam acessíveis apenas para
+# programas deste computador (o backend), e não para outros aparelhos da rede.
 services:
+  # PostgreSQL: usuários, comandos e logs (dados relacionais)
   db:
     image: postgres:16
     container_name: pi_postgres
@@ -10,11 +14,35 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-troque_esta_senha}
       POSTGRES_DB: ${DB_NAME:-projeto_integrador}
     ports:
-      - "5432:5432"
+      # porta_no_computador:porta_no_container. A do computador vem de DB_PORT no .env
+      # (use 5433 se já existir um PostgreSQL instalado ocupando a 5432)
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # Na primeira inicialização, o Postgres executa este script e cria as tabelas
+      # Na primeira inicialização (volume vazio), o Postgres executa este script e cria as tabelas
       - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+
+  # InfluxDB 3 Core: séries temporais da planta (temperatura, setpoint, erro, sinal de controle)
+  influxdb:
+    image: influxdb:3-core   # versão fixada: a tag "latest" pode mudar de versão sozinha
+    container_name: pi_influxdb
+    restart: unless-stopped
+    command:
+      - influxdb3
+      - serve
+      - --node-id=node0
+      - --object-store=file          # guarda os dados em arquivos (no volume abaixo)
+      - --data-dir=/var/lib/influxdb3/data
+      # O InfluxDB só confirma uma escrita depois de gravá-la no WAL (log em disco),
+      # e grava o WAL em intervalos fixos (padrão 1 s). Com 1 s, cada lote do MATLAB
+      # esperava até ~1 s pela resposta (medido: ~825 ms). Com 100 ms a espera cai
+      # para no máximo ~100 ms, sem abrir mão da garantia de que o dado está no disco.
+      - --wal-flush-interval=100ms
+    ports:
+      - "127.0.0.1:8181:8181"
+    volumes:
+      - influxdata:/var/lib/influxdb3
 
 volumes:
   pgdata:
+  influxdata:
