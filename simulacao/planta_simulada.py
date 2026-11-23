@@ -3,7 +3,8 @@
 Simulador da planta + MATLAB, para testar o backend sem o kit nem o MATLAB.
 
 Faz exatamente o que o script MATLAB (firmware/matlab/cliente_planta.m) faz:
-  - laço de controle PI a 100 Hz (Ts = 0,01 s);
+  - laço de controle PI a 100 Hz (Ts = 0,01 s), com os ganhos, a saturação e o
+    filtro do script de LCON-I do grupo;
   - guarda 1 amostra a cada DECIMACAO passos (padrão: 10 Hz);
   - a cada 1 s envia o lote para POST /api/data e lê, na própria resposta,
     os comandos { enabled, setpoint };
@@ -34,11 +35,16 @@ TS = 0.01            # período de amostragem do controle (100 Hz)
 DECIMACAO = 10       # guarda 1 a cada 10 amostras -> 10 Hz no banco
 PERIODO_ENVIO = 1.0  # envia um lote por segundo
 
-# Planta (troque pelos valores do seu kit) e controlador PI
+# Planta (modelo de exemplo: troque pela função de transferência do kit)
 T_AMB = 25.0
 A, B = 0.4, 2.0      # dT/dt = -A (T - T_AMB) + B u
-KP, KI = 0.8, 0.3
-U_MAX = 10.0
+
+# Controlador e filtro: mesmos valores do script de LCON-I do grupo (script09)
+KP, KI = 1.1, 0.4
+U_MAX = 9.5          # saturação do aquecedor (V)
+N_AQUEC = 6          # primeiras amostras sem controle, enquanto o filtro estabiliza
+TAU = 0.012732395447352          # filtro passa-baixa de 1ª ordem (fc = 12,5 Hz), Tustin
+A0, A1 = 1 + 2 * TAU / TS, 1 - 2 * TAU / TS
 
 
 def ler_device_key():
@@ -77,7 +83,8 @@ def post_lote(amostras):
 
 # Estado
 temp = T_AMB          # temperatura "real" da planta
-temp_f = T_AMB        # temperatura filtrada (o que o controle enxerga)
+xf0 = xf1 = yf0 = 0.0  # memórias do filtro (como em LCON-I)
+temp_f = 0.0          # temperatura filtrada (o que o controle enxerga)
 integral = 0.0
 enabled, setpoint = 0, 25.0   # até o site mandar outra coisa, controle desligado
 
@@ -93,18 +100,22 @@ proximo_envio = inicio + PERIODO_ENVIO
 
 try:
     while True:
-        # 1. Sensor (com ruído) + filtro passa-baixa de 1ª ordem
+        # 1. Sensor (com ruído) + filtro passa-baixa (o mesmo de LCON-I)
         leitura = temp + random.gauss(0, 0.15)
-        temp_f = 0.1 * leitura + 0.9 * temp_f
+        xf1, xf0 = xf0, leitura
+        yf1, yf0 = yf0, (xf0 + xf1 - A1 * yf0) / A0
+        temp_f = yf0
 
         # 2. Controle PI (ou desligado)
         erro = setpoint - temp_f
-        if enabled:
-            integral += KI * erro * TS
-            u = min(max(KP * erro + integral, 0.0), U_MAX)
-        else:
+        if not enabled:
             integral = 0.0   # PDF de LCON-I: flag 0 reinicializa o controlador
             u = 0.0
+        elif k < N_AQUEC:
+            u = 0.0          # filtro ainda estabilizando
+        else:
+            integral += KI * erro * TS
+            u = min(max(KP * erro + integral, 0.0), U_MAX)
 
         # 3. Planta avança um passo (Euler)
         temp += TS * (-A * (temp - T_AMB) + B * u)

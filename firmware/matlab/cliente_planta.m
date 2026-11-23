@@ -1,33 +1,41 @@
 function cliente_planta()
-% CLIENTE_PLANTA  Controle PI do kit LTR701 com troca de dados com o sistema web.
+% CLIENTE_PLANTA  Controle PI de temperatura do kit LTR701 + troca de dados com o sistema web.
 %
-% A cada 10 ms (100 Hz): lê a temperatura, filtra, calcula o PI e aplica no aquecedor.
-% A cada 1 s: envia um lote de amostras para POST /api/data e lê, na resposta,
-%             os comandos do site: enabled (0/1) e setpoint (°C).
+% Baseado no script de LCON-I do grupo (script09): mesma placa (NI-USB-6003),
+% mesmos canais, conversão Volts -> °C, filtro, ganhos e saturação. O que muda:
+%   - roda até você apertar Ctrl+C (em vez de 30 s fixos);
+%   - o setpoint e o liga/desliga vêm do site, na resposta do POST /api/data (1x por segundo);
+%   - a placa é encontrada automaticamente (hoje é "Dev4", mas o nome pode mudar).
 %
-% Por que em lote? Uma requisição HTTP leva alguns milissegundos. Se fosse feita a
-% cada amostra, o laço de 100 Hz atrasaria. Com uma requisição por segundo, no pior
-% caso atrasa um único passo por segundo — e esse atraso é medido e mostrado no fim.
+% Por que enviar em lote? Uma requisição HTTP leva ~50 ms. Se fosse feita a cada
+% amostra, o laço de 100 Hz não conseguiria acompanhar. Com uma requisição por
+% segundo, só alguns passos por segundo atrasam — e isso é medido e mostrado no fim.
 %
-% SIMULACAO = true  -> roda sem o kit (usa o modelo da planta), para testar em casa.
-% SIMULACAO = false -> usa a NI-USB-6003: complete ler_temperatura_volts,
-%                      volts_para_celsius e aplicar_aquecedor com o código de LCON-I.
+% Ao parar (Ctrl+C), aquecedor e ventilador são desligados e um resumo é exibido.
 %
-% Pressione Ctrl+C para parar: o aquecedor é desligado e um resumo é exibido.
+% Antes de rodar com o kit: seletores dos atuadores 1 e 2 em OFF, ligações com a
+% placa conferidas, e o backend no ar (docker compose up -d).
 
 %% ---------------- Configuração ----------------
-SIMULACAO     = true;
-SERVER        = "http://localhost:3000/api";
-DEVICE_ID     = "LTR701_MATLAB";
-DEVICE_KEY    = ler_device_key();
+SIMULACAO = false;   % true = testa sem o kit (um modelo da planta substitui a placa)
+DEV_ID    = "";      % "" = encontra a NI-USB-6003 sozinho; ou force o nome, ex.: "Dev4"
 
-Ts            = 0.01;   % período do controle (100 Hz)
+SERVER     = "http://localhost:3000/api";
+DEVICE_ID  = "LTR701_MATLAB";
+DEVICE_KEY = ler_device_key();
+
+Ts            = 0.01;   % período de amostragem: 100 Hz (d.Rate do script de LCON-I)
 DECIMACAO     = 10;     % envia 1 a cada 10 amostras (10 Hz no banco)
 PERIODO_ENVIO = 1.0;    % um lote por segundo
 
-Kp = 0.8;  Ki = 0.3;    % ganhos do PI (definidos em LCON-I; NÃO vêm do site)
-U_MAX = 10;             % tensão máxima do aquecedor (V)
-ALFA  = 0.1;            % filtro passa-baixa: temp_f = ALFA*leitura + (1-ALFA)*temp_f
+% ---- Valores do grupo, vindos do script de LCON-I ----
+Kp = 1.1;  Ki = 0.4;    % ganhos do PI (NÃO vêm do site, como pede o PDF)
+U_MAX   = 9.5;          % saturação do aquecedor (V)
+V_VENT  = 2.5;          % tensão fixa do ventilador (ACTUATOR 1)
+N_AQUEC = 6;            % primeiras amostras sem controle, enquanto o filtro estabiliza
+tau     = 0.012732395447352;   % filtro passa-baixa de 1ª ordem (fc = 1/(2*pi*tau) = 12,5 Hz)
+a0 = 1.0 + (2.0*tau/Ts);       % coeficientes do filtro discretizado (Tustin), iguais aos de LCON-I
+a1 = 1.0 - (2.0*tau/Ts);
 
 opts = weboptions( ...
     'MediaType',    'application/json', ...
@@ -35,23 +43,28 @@ opts = weboptions( ...
     'HeaderFields', {'X-Device-Key', char(DEVICE_KEY)}, ...
     'Timeout',      0.5);                           % não trava o laço se o servidor cair
 
-%% ---------------- Hardware ou simulação ----------------
+%% ---------------- Placa NI-USB-6003 ou simulação ----------------
 if SIMULACAO
-    planta.T = 25; planta.T_amb = 25; planta.a = 0.4; planta.b = 2;   % G(s) = 2/(s+0.4)
+    % Modelo de exemplo (G(s) = 2/(s+0.4)). Troque pela função de transferência do kit.
+    planta.T = 25; planta.T_amb = 25; planta.a = 0.4; planta.b = 2;
     dq = [];
 else
-    % Exemplo — ajuste canais e configuração conforme o script de LCON-I:
-    % dq = daq("ni");
-    % addinput(dq,  "Dev1", "ai0", "Voltage");   % sensor de temperatura
-    % addoutput(dq, "Dev1", "ao0", "Voltage");   % aquecedor
-    error("Configure a NI-USB-6003 (veja os comentários acima) e mude SIMULACAO para true para testar sem o kit.");
+    DEV_ID = encontrar_placa(DEV_ID);
+    dq = daq("ni");
+    ch = addinput(dq, DEV_ID, "ai0", "Voltage");  % SENSOR 2
+    ch.TerminalConfig = "SingleEnded";
+    addoutput(dq, DEV_ID, "ao0", "Voltage");       % ACTUATOR 2: aquecedor
+    addoutput(dq, DEV_ID, "ao1", "Voltage");       % ACTUATOR 1: ventilador
+    dq.Rate = 1/Ts;
+    write(dq, [0 V_VENT]);                         % ventilador ligado, aquecedor desligado
 end
 
 %% ---------------- Estado ----------------
-enabled  = 0;           % começa desligado até o site mandar enabled = 1
+enabled  = 0;           % começa DESLIGADO até o site mandar enabled = 1
 setpoint = 25;
 integral = 0;
-temp_f   = 25;
+xf0 = 0; xf1 = 0; yf0 = 0; yf1 = 0;   % memórias do filtro (como em LCON-I)
+u = 0;
 
 N_BUF = ceil(PERIODO_ENVIO / Ts / DECIMACAO) + 5;
 buf = struct('t', cell(1, N_BUF), 'temp', [], 'setpoint', [], 'erro', [], 'u', [], 'enabled', []);
@@ -65,42 +78,51 @@ relogio = tic;
 k = 0;
 proximo_envio = PERIODO_ENVIO;
 
-% Ao parar (Ctrl+C ou erro): desliga o aquecedor e mostra o resumo.
-% "encerrar" é uma função aninhada (definida no fim desta função), então enxerga
-% os valores ATUAIS de stats, dq e SIMULACAO no momento em que o script para.
+% Ao parar (Ctrl+C ou erro): desliga os atuadores e mostra o resumo.
+% "encerrar" é uma função aninhada (no fim desta função): enxerga os valores atuais.
 limpeza = onCleanup(@encerrar); %#ok<NASGU>
 
-fprintf("Rodando (%s). Controle DESLIGADO até o site enviar enabled = 1.\n\n", ...
-        ternario(SIMULACAO, "simulação", "kit LTR701"));
+if SIMULACAO
+    fprintf("Rodando em SIMULAÇÃO.\n");
+else
+    fprintf("Rodando com o kit LTR701 (placa %s).\n", DEV_ID);
+end
+fprintf("Controle DESLIGADO até o site enviar enabled = 1. Ctrl+C para parar.\n\n");
 
 %% ---------------- Laço de controle (100 Hz) ----------------
 while true
-    % 1. Leitura do sensor + filtro
+    % 1. Leitura do sensor, já em °C
     if SIMULACAO
-        leitura = planta.T + 0.15 * randn();
+        temp_C = planta.T + 0.15 * randn();
     else
-        leitura = volts_para_celsius(ler_temperatura_volts(dq));
+        temp_C = volts_para_celsius(read(dq, "OutputFormat", "Matrix"));
     end
-    temp_f = ALFA * leitura + (1 - ALFA) * temp_f;
 
-    % 2. Controle PI (flag 0 => reinicializa o controlador, como pede o PDF)
+    % 2. Filtro passa-baixa (o mesmo de LCON-I)
+    xf1 = xf0;  xf0 = temp_C;
+    yf1 = yf0;  yf0 = (xf0 + xf1 - a1*yf1) / a0;
+    temp_f = yf0;
+
+    % 3. Controle PI (integrador de Euler) com saturação
     erro = setpoint - temp_f;
-    if enabled == 1
-        integral = integral + Ki * erro * Ts;
-        u = min(max(Kp * erro + integral, 0), U_MAX);
-    else
-        integral = 0;
+    if enabled ~= 1
+        integral = 0;    % PDF de LCON-I: flag 0 reinicializa o controlador
         u = 0;
+    elseif k < N_AQUEC
+        u = 0;           % filtro ainda estabilizando
+    else
+        integral = integral + erro*Ki*Ts;
+        u = min(max(Kp*erro + integral, 0), U_MAX);
     end
 
-    % 3. Atuação
+    % 4. Atuação
     if SIMULACAO
         planta.T = planta.T + Ts * (-planta.a * (planta.T - planta.T_amb) + planta.b * u);
     else
-        aplicar_aquecedor(dq, u);
+        write(dq, [u V_VENT]);   % [ao0 = aquecedor, ao1 = ventilador]
     end
 
-    % 4. Guarda amostra decimada
+    % 5. Guarda amostra decimada
     if mod(k, DECIMACAO) == 0
         nb = nb + 1;
         buf(nb) = struct('t', t0_ms + toc(relogio) * 1000, 'temp', round(temp_f, 3), ...
@@ -109,7 +131,7 @@ while true
     end
     k = k + 1;
 
-    % 5. Uma vez por segundo: envia o lote e recebe os comandos
+    % 6. Uma vez por segundo: envia o lote e recebe os comandos
     if toc(relogio) >= proximo_envio && nb > 0
         proximo_envio = proximo_envio + PERIODO_ENVIO;
         stats.lotes = stats.lotes + 1;
@@ -132,7 +154,7 @@ while true
         nb = 0;   % começa outro lote (o anterior foi enviado ou perdido)
     end
 
-    % 6. Espera o próximo instante de amostragem (k * Ts)
+    % 7. Espera o próximo instante de amostragem (k * Ts)
     espera = k * Ts - toc(relogio);
     if espera > 0
         pause(espera);
@@ -144,11 +166,14 @@ end
     % ---- Função aninhada: executada automaticamente ao parar o script ----
     function encerrar()
         if ~SIMULACAO && ~isempty(dq)
-            aplicar_aquecedor(dq, 0);   % segurança: aquecedor desligado
+            try
+                write(dq, [0 0]);   % segurança: aquecedor e ventilador desligados
+            catch
+            end
         end
         fprintf("\n--- Resumo ---\n");
-        fprintf("Lotes: %d   falhas: %d   perda: %.1f%%   passos atrasados: %d\n", ...
-                stats.lotes, stats.falhas, 100 * stats.falhas / max(stats.lotes, 1), stats.atrasos);
+        fprintf("Lotes: %d   falhas: %d   perda: %.1f%%   passos atrasados: %d de %d\n", ...
+                stats.lotes, stats.falhas, 100 * stats.falhas / max(stats.lotes, 1), stats.atrasos, k);
         if ~isempty(stats.rtts)
             fprintf("RTT médio: %.1f ms   mín: %.1f ms   máx: %.1f ms\n", ...
                     mean(stats.rtts), min(stats.rtts), max(stats.rtts));
@@ -157,6 +182,30 @@ end
 end
 
 %% ================= Funções auxiliares =================
+
+function T = volts_para_celsius(v)
+% Conversão do SENSOR 2, obtida em LCON-I
+T = 10.29*v + 0.34;
+end
+
+function devId = encontrar_placa(devId)
+% Se DEV_ID não foi forçado, procura a placa NI conectada (de preferência uma USB-6003).
+if strlength(devId) > 0
+    return
+end
+lista = daqlist("ni");
+if isempty(lista) || height(lista) == 0
+    error("Nenhuma placa NI encontrada. Confira o cabo USB e se a placa aparece no NI MAX. " + ...
+          "Para testar sem o kit, use SIMULACAO = true.");
+end
+modelos = string(lista.Model);
+idx = find(contains(modelos, "6003"), 1);
+if isempty(idx)
+    idx = 1;
+end
+devId = string(lista.DeviceID(idx));
+fprintf("Placa encontrada: %s (%s)\n", devId, modelos(idx));
+end
 
 function key = ler_device_key()
 % Lê DEVICE_KEY do .env da raiz do repositório (o mesmo usado pelo servidor)
@@ -171,17 +220,4 @@ end
 
 function s = ternario(cond, a, b)
 if cond, s = a; else, s = b; end
-end
-
-% ---- Hardware: complete com o código de LCON-I ----
-function v = ler_temperatura_volts(dq)
-v = read(dq, "OutputFormat", "Matrix");   % ajuste conforme seu script de LCON-I
-end
-
-function T = volts_para_celsius(v)
-error("Coloque aqui a equação de conversão Volts -> °C obtida em LCON-I (v = %.3f V).", v);
-end
-
-function aplicar_aquecedor(dq, u)
-write(dq, u);   % ajuste conforme seu script de LCON-I (ex.: canais do ventilador e aquecedor)
 end

@@ -41,8 +41,7 @@ docker compose up -d --build
 | Criptografia AES-256-GCM de leituras, comandos e logs | ✅ funcionando |
 | Log de toda requisição (timestamp, IP, status) | ✅ funcionando |
 | Simulador da planta em Python | ✅ funcionando |
-| Script MATLAB (`cliente_planta.m`) em modo simulação | ⚠️ escrito, falta testar no MATLAB |
-| Script MATLAB com o kit real (NI-USB-6003) | ⏳ falta o código de hardware de LCON-I |
+| Script MATLAB (`cliente_planta.m`) com o kit real, a partir do script de LCON-I | ⚠️ escrito, falta testar no laboratório |
 | Login, níveis de acesso admin/usuário, `POST /api/send` | ⏳ próximo passo |
 | Frontend: formulário + dashboard em tempo real | ⏳ a fazer |
 | Simulação no site ("sombra digital") | ⏳ a fazer |
@@ -298,7 +297,7 @@ O `simulacao/planta_simulada.py` faz exatamente o que o MATLAB faz:
 - saturação de 0 a 10 V;
 - amostras a 10 Hz enviadas em lote a cada 1 s.
 
-A planta é dT/dt = −0,4·(T − 25) + 2·u, ou seja, G(s) = 2/(s+0,4), o exemplo do professor. **Troque pelos parâmetros do kit do grupo** obtidos em LCON-I. Os mesmos valores estão no `cliente_planta.m`.
+O controlador e o filtro usam os mesmos valores do kit real (Kp = 1,1, Ki = 0,4, saturação em 9,5 V). A **planta** ainda é o exemplo do professor: dT/dt = −0,4·(T − 25) + 2·u, ou seja, G(s) = 2/(s+0,4). **Troque pela função de transferência do kit** obtida em LCON-I (no simulador e no modo `SIMULACAO` do `cliente_planta.m`).
 
 Resultado esperado com `setpoint 40` e `enabled 1`: a temperatura sobe de 25 para ~40 °C em ~3 s, com u ≈ 3 V em regime (25 + 5·3 = 40). Ao parar com Ctrl+C, o simulador mostra a perda de pacotes e o RTT.
 
@@ -306,16 +305,30 @@ Resultado esperado com `setpoint 40` e `enabled 1`: a temperatura sobe de 25 par
 
 ## Usar com o kit LTR701
 
-No `firmware/matlab/cliente_planta.m`:
-1. Mude `SIMULACAO = false`.
-2. Configure a NI-USB-6003 (bloco `daq("ni")`, comentado no script).
-3. Complete as três funções do fim do arquivo com o código de LCON-I:
-   - `ler_temperatura_volts`: leitura do sensor;
-   - `volts_para_celsius`: equação de conversão do kit;
-   - `aplicar_aquecedor`: saída para o aquecedor (e o ventilador, se necessário).
-4. Ajuste `Kp`, `Ki` e o filtro `ALFA` para os valores do grupo.
+O `firmware/matlab/cliente_planta.m` já tem a parte de hardware, feita a partir do script de LCON-I do grupo (`script09`):
 
-Antes de ligar o kit, confira se os seletores dos atuadores 1 e 2 estão em **OFF** e confira as ligações com a placa. Ao parar o script (Ctrl+C), o aquecedor é desligado automaticamente.
+| Item | Valor |
+|---|---|
+| Placa | NI-USB-6003, **encontrada automaticamente** (normalmente `Dev4`) |
+| Sensor | SENSOR 2 em `ai0`, modo single-ended |
+| Aquecedor (ACTUATOR 2) | `ao0`, de 0 a **9,5 V** (saturação) |
+| Ventilador (ACTUATOR 1) | `ao1`, fixo em **2,5 V** enquanto o script roda |
+| Conversão | T [°C] = 10,29 · V + 0,34 |
+| Filtro | passa-baixa de 1ª ordem, τ = 0,0127 s (fc = 12,5 Hz), discretizado por Tustin |
+| Controlador | PI com Kp = 1,1 e Ki = 0,4, a 100 Hz; as 6 primeiras amostras ficam sem controle (filtro estabilizando) |
+
+**Para rodar no laboratório:**
+1. Confira os seletores dos atuadores 1 e 2 em **OFF** e as ligações com a placa.
+2. Suba o backend (`docker compose up -d`).
+3. No MATLAB, vá até `firmware/matlab` e rode `cliente_planta`. Ele mostra qual placa encontrou.
+4. Ligue o controle pelo site ou pelo terminal (`docker compose exec backend /backend comando enabled 1`).
+5. Ao parar com Ctrl+C, aquecedor e ventilador são **desligados automaticamente**.
+
+**Se o nome da placa mudar** (por exemplo, `Dev2`), não precisa fazer nada: o script procura a USB-6003 sozinho. Para forçar um nome, use `DEV_ID = "Dev2"` no topo do script.
+
+**Sem o kit:** mude `SIMULACAO = true` no topo do script. Um modelo da planta substitui a placa.
+
+> Para a perturbação de temperatura no kit real, abra ou feche parcialmente a tampa de entrada de ar.
 
 ---
 
