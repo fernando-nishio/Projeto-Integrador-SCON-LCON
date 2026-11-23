@@ -21,23 +21,27 @@ Kit LTR701 ⇄ NI-USB-6003 ⇄ MATLAB (PI a 100 Hz)
 
 ## Como rodar
 
+**No Docker (padrão)**: na raiz do repositório, rode o comando abaixo. A configuração, os bancos e as tabelas são criados automaticamente (veja o README principal).
 ```bash
-# na raiz do repositório: subir os bancos
-docker compose up -d
-
-# token do InfluxDB (uma vez) → colar em INFLUX_TOKEN no backend/.env
-docker exec -it pi_influxdb influxdb3 create token --admin
-
-# no backend/
-npm install
-npm run dev        # reinicia sozinho a cada alteração de arquivo
+docker compose up -d --build
 ```
+
+**Fora do Docker (para desenvolver)**: o backend reinicia sozinho a cada alteração.
+```bash
+docker compose up -d db influxdb   # na raiz: só os bancos
+docker compose stop backend        # libera a porta 3000
+cd backend
+npm install
+npm run dev
+```
+
+Nos dois modos, a configuração vem do **`.env` da raiz do repositório**, que é gerado pelo `scripts/setup.mjs`. Ao iniciar, o backend aplica o `src/db/schema.sql`, que só tem `CREATE ... IF NOT EXISTS` e por isso pode rodar quantas vezes for preciso.
 
 Para enviar um comando pelo terminal (antes de existir o formulário do site):
 
 ```bash
-npm run comando -- enabled 1     # liga o controle
-npm run comando -- setpoint 40   # muda o setpoint
+docker compose exec backend npm run comando -- enabled 1    # backend no Docker
+npm run comando -- setpoint 40                              # backend fora do Docker (em backend/)
 ```
 
 ## Rotas
@@ -96,11 +100,15 @@ Tipos de evento: `http_request`, `http_error`, `data_received`, `data_invalid`, 
 
 ```
 backend/
-├── scripts/comando.js        # envia comando pelo terminal
+├── Dockerfile                # imagem node:22-alpine (backend e setup)
+├── scripts/
+│   ├── setup.mjs             # gera/completa o .env e a config dos containers
+│   └── comando.js            # envia comando pelo terminal
 └── src/
     ├── server.js             # ponto de entrada, monta as rotas
     ├── db/
     │   ├── pool.js           # conexão com o PostgreSQL
+    │   ├── migrate.js        # aplica o schema ao iniciar
     │   └── schema.sql        # tabelas users, commands, logs
     ├── middleware/
     │   ├── deviceKey.js      # valida X-Device-Key

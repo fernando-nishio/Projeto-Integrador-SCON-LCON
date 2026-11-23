@@ -1,16 +1,17 @@
 {
   "name": "projeto-integrador-backend",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "API REST do Projeto Integrador SCOM/LCON: recebe dados da planta via MATLAB, envia comandos e guarda tudo criptografado (InfluxDB + PostgreSQL)",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "start": "node --env-file=.env src/server.js",
-    "dev": "node --env-file=.env --watch src/server.js",
-    "comando": "node --env-file=.env scripts/comando.js"
+    "start": "node --env-file=../.env src/server.js",
+    "dev": "node --env-file=../.env --watch src/server.js",
+    "comando": "node --env-file=../.env scripts/comando.js",
+    "setup": "node scripts/setup.mjs"
   },
   "engines": {
-    "node": ">=20.6"
+    "node": ">=20.11"
   },
   "dependencies": {
     "express": "^5.1.0",

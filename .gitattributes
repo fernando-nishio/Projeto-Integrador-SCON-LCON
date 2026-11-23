@@ -1,0 +1,9 @@
+# Força final de linha do Linux (LF) em todos os arquivos de texto,
+# para o projeto funcionar igual em Windows, Linux e macOS.
+* text=auto eol=lf
+
+# Arquivos binários: nunca converter
+*.png binary
+*.jpg binary
+*.pdf binary
+*.mat binary

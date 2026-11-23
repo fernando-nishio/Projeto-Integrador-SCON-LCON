@@ -1,0 +1,5 @@
+# Não entram no contexto do build
+*_test.go
+README.md
+.env
+.env.*

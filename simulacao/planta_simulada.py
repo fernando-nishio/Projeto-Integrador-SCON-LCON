@@ -44,12 +44,12 @@ U_MAX = 10.0
 def ler_device_key():
     if os.environ.get("DEVICE_KEY"):
         return os.environ["DEVICE_KEY"]
-    env = Path(__file__).resolve().parent.parent / "backend" / ".env"
+    env = Path(__file__).resolve().parent.parent / ".env"
     if env.exists():
         for linha in env.read_text().splitlines():
             if linha.startswith("DEVICE_KEY="):
                 return linha.split("=", 1)[1].strip()
-    raise SystemExit("DEVICE_KEY não encontrada (nem no ambiente, nem em backend/.env)")
+    raise SystemExit("DEVICE_KEY não encontrada (nem no ambiente, nem no .env da raiz do repositório)")
 
 
 DEVICE_KEY = ler_device_key()
@@ -86,7 +86,7 @@ lotes = falhas = 0
 rtts = []
 k = 0
 print(f"Simulando {DEVICE_ID} -> {SERVER}  (Ctrl+C para parar)")
-print("Controle começa DESLIGADO. Ligue com:  npm run comando -- enabled 1   (em backend/)\n")
+print("Controle começa DESLIGADO. Ligue com:  docker compose exec backend /backend comando enabled 1\n")
 
 inicio = time.perf_counter()
 proximo_envio = inicio + PERIODO_ENVIO

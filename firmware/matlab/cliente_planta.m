@@ -159,8 +159,8 @@ end
 %% ================= Funções auxiliares =================
 
 function key = ler_device_key()
-% Lê DEVICE_KEY do backend/.env (o mesmo arquivo usado pelo servidor)
-arquivo = fullfile(fileparts(mfilename('fullpath')), '..', '..', 'backend', '.env');
+% Lê DEVICE_KEY do .env da raiz do repositório (o mesmo usado pelo servidor)
+arquivo = fullfile(fileparts(mfilename('fullpath')), '..', '..', '.env');
 texto = fileread(arquivo);
 tok = regexp(texto, 'DEVICE_KEY=(\S+)', 'tokens', 'once');
 if isempty(tok)
