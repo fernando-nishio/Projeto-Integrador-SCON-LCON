@@ -54,7 +54,7 @@ Medições de desempenho já feitas (simulador → backend → InfluxDB, mesmo c
 | Configuração | RTT médio | Observação |
 |---|---|---|
 | WAL do InfluxDB a cada 1 s (padrão) | ~825 ms | a escrita esperava a próxima gravação do WAL |
-| WAL a cada 100 ms, backend em Node | ~81 ms | `--wal-flush-interval=100ms` no `docker-compose.yml` |
+| WAL a cada 100 ms, backend antigo em Node.js | ~81 ms | `--wal-flush-interval=100ms` no `docker-compose.yml` |
 | WAL a cada 100 ms, backend em Go (atual) | ~57 ms | 0% de perda em 43 lotes |
 | Escrita sem esperar o WAL (`no_sync`) | ~9 ms | só para comparação, não usado |
 
@@ -111,7 +111,6 @@ Os ganhos Kp e Ki ficam no próprio script MATLAB e **não** vêm do site.
 │   ├── crypto.go, influx.go, samples.go, commands.go, logger.go, middleware.go, ...
 │   ├── schema.sql              # tabelas do Postgres (embutido no binário)
 │   └── backend_test.go         # testes automáticos
-├── backend/                    # versão ANTIGA em Node.js (mantida só para comparação; será apagada)
 ├── firmware/matlab/
 │   └── cliente_planta.m        # controle PI + comunicação com o backend
 ├── simulacao/
@@ -378,7 +377,7 @@ docker image prune                  # apaga imagens antigas que não são mais u
 | Sintoma | Causa / solução |
 |---|---|
 | `permission denied` ao usar `docker` | Seu usuário ainda não está no grupo `docker` desta sessão. Saia da sessão e entre de novo, ou rode `newgrp docker`. |
-| `address already in use` (3000, 5433 ou 8181) | Outro programa usa a porta. Para a 3000, provavelmente é um backend antigo aberto (`npm run dev` ou `go run .`), ou o container `backend` está ligado enquanto você roda o backend fora do Docker. |
+| `address already in use` (3000, 5433 ou 8181) | Outro programa usa a porta. Para a 3000, provavelmente é um `go run .` aberto, ou o container `backend` está ligado enquanto você roda o backend fora do Docker. |
 | `docker compose` não acha o `.env` | Rode os comandos do Docker na **raiz** do repositório. |
 | `ls` não mostra o `.env` | Arquivos com `.` no início ficam ocultos. Use `ls -a`. |
 | `backend` reiniciando sem parar | Veja o motivo em `docker compose logs backend`. |

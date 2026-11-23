@@ -1,5 +1,0 @@
-# Não entram na imagem (as dependências são instaladas dentro dela)
-node_modules
-npm-debug.log
-.env
-.env.*
