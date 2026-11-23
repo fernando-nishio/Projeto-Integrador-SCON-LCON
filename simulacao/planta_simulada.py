@@ -93,7 +93,7 @@ lotes = falhas = 0
 rtts = []
 k = 0
 print(f"Simulando {DEVICE_ID} -> {SERVER}  (Ctrl+C para parar)")
-print("Controle começa DESLIGADO. Ligue com:  docker compose exec backend /backend comando enabled 1\n")
+print("Controle começa DESLIGADO. Ligue pelo site (http://localhost:3000) ou com:\n  docker compose exec backend /backend comando enabled 1\n")
 
 inicio = time.perf_counter()
 proximo_envio = inicio + PERIODO_ENVIO

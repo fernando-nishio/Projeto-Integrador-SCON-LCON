@@ -1,0 +1,12 @@
+# O build da imagem (contexto = raiz do repositório) só precisa destas pastas.
+# Ignorar o resto deixa o build mais rápido e garante que o .env nunca entre na imagem.
+*
+!backend-go/
+!frontend/
+
+backend-go/*_test.go
+backend-go/web/
+frontend/node_modules/
+frontend/dist/
+**/.env
+**/.env.*

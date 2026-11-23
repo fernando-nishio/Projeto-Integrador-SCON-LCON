@@ -18,6 +18,7 @@ type Config struct {
 	InfluxToken   string
 	DeviceKey     string
 	EncryptionKey []byte // 32 bytes (AES-256)
+	JWTSecret     []byte // chave que assina as sessões de login
 	Host          string
 	Port          string
 }
@@ -70,6 +71,11 @@ func loadConfig() (*Config, error) {
 	if os.Getenv("DEVICE_KEY") == "" {
 		return nil, errors.New("DEVICE_KEY vazia no .env")
 	}
+	jwt := os.Getenv("JWT_SECRET")
+	if len(jwt) < 32 || strings.HasPrefix(jwt, "troque_") {
+		return nil, errors.New("JWT_SECRET ausente ou curta no .env (mínimo 32 caracteres). " +
+			"Rode o setup (docker compose up) para gerar uma")
+	}
 
 	// postgres://usuario:senha@host:porta/banco?sslmode=disable
 	// url.UserPassword escapa caracteres especiais da senha automaticamente.
@@ -88,6 +94,7 @@ func loadConfig() (*Config, error) {
 		InfluxToken:   os.Getenv("INFLUX_TOKEN"),
 		DeviceKey:     os.Getenv("DEVICE_KEY"),
 		EncryptionKey: key,
+		JWTSecret:     []byte(jwt),
 		// Fora do Docker: só localhost (o MATLAB roda no mesmo computador).
 		// No Docker, HOST=0.0.0.0 vem do docker-compose.yml.
 		Host: getenv("HOST", "127.0.0.1"),

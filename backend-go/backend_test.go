@@ -8,10 +8,13 @@ package main
 // Com Go instalado: cd backend-go && go test -v ./...
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 var chaveTeste = []byte("0123456789abcdef0123456789abcdef") // 32 bytes
@@ -126,5 +129,78 @@ func TestSetupPreservaValoresDoUsuario(t *testing.T) {
 	depois, _ := os.ReadFile(filepath.Join(repo, ".env"))
 	if string(antes) != string(depois) {
 		t.Error("rodar o setup de novo não deveria mudar nada")
+	}
+}
+
+func TestSenhaHash(t *testing.T) {
+	h1, _ := hashPassword("segredo123")
+	h2, _ := hashPassword("segredo123")
+	if h1 == h2 {
+		t.Fatal("a mesma senha deveria gerar hashes diferentes (sal aleatório)")
+	}
+	if !strings.HasPrefix(h1, "pbkdf2-sha256$600000$") {
+		t.Fatalf("formato inesperado: %s", h1)
+	}
+	if !verifyPassword("segredo123", h1) || verifyPassword("segredo124", h1) || verifyPassword("x", "lixo") {
+		t.Fatal("verificação de senha incorreta")
+	}
+}
+
+func TestJWT(t *testing.T) {
+	a := &App{cfg: &Config{JWTSecret: []byte(strings.Repeat("k", 48))}}
+	agora := time.Now().Unix()
+	tok := a.signJWT(Claims{Sub: 7, Name: "ana", Role: "user", Iat: agora, Exp: agora + 60})
+	c, err := a.verifyJWT(tok)
+	if err != nil || c.Sub != 7 || c.Role != "user" {
+		t.Fatalf("token válido recusado: %v", err)
+	}
+	// Alguém tenta virar admin trocando o conteúdo do token
+	p := strings.Split(tok, ".")
+	falso, _ := json.Marshal(Claims{Sub: 7, Name: "ana", Role: "admin", Iat: agora, Exp: agora + 60})
+	if _, err := a.verifyJWT(p[0] + "." + b64url.EncodeToString(falso) + "." + p[2]); err == nil {
+		t.Fatal("token adulterado foi aceito")
+	}
+	expirado := a.signJWT(Claims{Sub: 7, Role: "user", Exp: agora - 1})
+	if _, err := a.verifyJWT(expirado); err == nil {
+		t.Fatal("token expirado foi aceito")
+	}
+	outra := &App{cfg: &Config{JWTSecret: []byte(strings.Repeat("z", 48))}}
+	if _, err := outra.verifyJWT(tok); err == nil {
+		t.Fatal("token assinado com outra chave foi aceito")
+	}
+}
+
+func TestSiteEApi404(t *testing.T) {
+	h := (&App{}).staticHandler()
+	casos := []struct {
+		caminho, tipo string
+		status        int
+	}{
+		{"/", "text/html", 200},
+		{"/admin", "text/html", 200}, // página do React: devolve o index.html
+		{"/api/nao-existe", "application/json", 404},
+	}
+	for _, c := range casos {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", c.caminho, nil))
+		if rec.Code != c.status || !strings.HasPrefix(rec.Header().Get("Content-Type"), c.tipo) {
+			t.Errorf("%s: status %d, tipo %q", c.caminho, rec.Code, rec.Header().Get("Content-Type"))
+		}
+	}
+}
+
+func TestHubTempoReal(t *testing.T) {
+	h := newHub()
+	a, b := h.subscribe(), h.subscribe()
+	h.Broadcast([]byte("oi"))
+	if string(<-a) != "oi" || string(<-b) != "oi" {
+		t.Fatal("mensagem não chegou a todos")
+	}
+	h.unsubscribe(a)
+	for range 100 { // cliente lento com fila cheia não pode travar o envio
+		h.Broadcast([]byte("x"))
+	}
+	if h.Count() != 1 {
+		t.Fatal("contagem de clientes errada")
 	}
 }

@@ -24,6 +24,21 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap deixa o http.ResponseController alcançar o ResponseWriter original
+// (necessário para o Flush do tempo real em /api/stream).
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+// reqInfo acompanha a requisição: o requireAuth preenche o usuário, e o log da
+// requisição (que roda depois) registra quem fez.
+type reqInfo struct{ user *Claims }
+
+type ctxKey struct{}
+
+func getInfo(r *http.Request) *reqInfo {
+	info, _ := r.Context().Value(ctxKey{}).(*reqInfo)
+	return info
+}
+
 // clientIP tira a porta do endereço remoto ("127.0.0.1:54321" -> "127.0.0.1").
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -34,10 +49,12 @@ func clientIP(r *http.Request) string {
 }
 
 // requestLogger registra TODA requisição na tabela logs (timestamp, IP, método,
-// rota, duração, status) — requisito "cada requisição deve ser registrada em log".
+// rota, duração, status e usuário) — requisito "cada requisição deve ser registrada".
 func (a *App) requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		info := &reqInfo{}
+		r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, info))
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 
 		next.ServeHTTP(rec, r) // executa a rota de fato
@@ -52,7 +69,22 @@ func (a *App) requestLogger(next http.Handler) http.Handler {
 			eventType = "http_error"
 		}
 		// "go" roda em paralelo (goroutine): gravar o log não atrasa a resposta
-		go a.logEvent(context.Background(), logEntry{EventType: eventType, Description: desc, IP: ip, Status: rec.status})
+		go a.logEvent(context.Background(), logEntry{EventType: eventType, Description: desc, IP: ip,
+			Status: rec.status, UserID: userIDPtr(info.user)})
+	})
+}
+
+// securityHeaders acrescenta cabeçalhos que endurecem o site no navegador.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		// Só carrega scripts/estilos/conexões do próprio servidor (bloqueia injeção de scripts externos)
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
+		h.Set("X-Content-Type-Options", "nosniff") // não "adivinha" o tipo de arquivo
+		h.Set("X-Frame-Options", "DENY")           // a página não pode ser embutida em outro site
+		h.Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
 	})
 }
 

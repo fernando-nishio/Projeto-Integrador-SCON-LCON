@@ -35,12 +35,17 @@ Todos os arquivos `.go` desta pasta pertencem ao mesmo **pacote `main`**. O Go o
 | `commands.go` | Comandos `enabled`/`setpoint`: validar, gravar, ler o estado atual e o modo `comando` do terminal. |
 | `logger.go` | Grava eventos na tabela `logs`, com descrição e IP cifrados. |
 | `middleware.go` | Funções que "embrulham" as rotas: log de toda requisição e checagem da `X-Device-Key`. |
-| `handlers.go` | As rotas da API. |
+| `handlers.go` | As rotas da API (dados, comandos, status). |
+| `auth.go` | Senhas com hash PBKDF2, sessões com JWT em cookie HttpOnly e `requireAuth`, que protege rotas por papel. |
+| `users.go` | Login, logout, cadastro e lista de usuários e leitura dos logs (admin). |
+| `stream.go` | Tempo real: o `Hub` distribui cada lote para os painéis abertos via Server-Sent Events (`/api/stream`). |
+| `web.go` | Serve o site React, que é **embutido no binário** (`//go:embed all:web`). Rotas desconhecidas fora de `/api/` devolvem o `index.html`. |
+| `web/index.html` | Página provisória para quando se compila sem o frontend. No Docker, é substituída pelo build do React. |
 | `setup.go` | Modo `setup`: gera/completa o `.env` e os arquivos de configuração dos containers. |
 | `chown_unix.go` / `chown_other.go` | Devolve o `.env` ao seu usuário quando o setup roda como root (só em Linux/macOS). |
 | `schema.sql` | Tabelas do Postgres. É **embutido no binário** na compilação (`//go:embed`). |
 | `backend_test.go` | Testes automáticos. |
-| `Dockerfile` | Build em duas etapas: compila com `golang:1.25-alpine` e copia só o binário para `scratch`. |
+| `Dockerfile` | Build em três etapas: compila o React (`node:22-alpine`), compila o Go com o site embutido (`golang:1.25-alpine`) e copia só o binário para `scratch`. O contexto do build é a raiz do repositório. |
 
 ### Cinco ideias de Go que aparecem no código
 
@@ -100,7 +105,17 @@ go run . comando setpoint 40       # envia comando
 | GET | `/api/health` | — | Estado do servidor e dos dois bancos |
 | POST | `/api/data` | Header `X-Device-Key` | Recebe um lote de amostras; responde com os comandos atuais |
 | GET | `/api/commands` | Header `X-Device-Key` | Comandos atuais `{ enabled, setpoint }` |
-| GET | `/api/data/latest?limit=20` | *(provisório: aberta)* | Últimas amostras, descriptografadas |
+| GET | `/api/auth/setup` | — | `{ needs_admin }`: true enquanto não existir nenhum usuário |
+| POST | `/api/auth/login` | — | `{ username, password }`; grava o cookie de sessão (8 h) |
+| POST | `/api/auth/logout` | — | Apaga o cookie |
+| GET | `/api/auth/me` | sessão | Usuário logado |
+| GET | `/api/users` | admin | Lista usuários |
+| POST | `/api/users` | admin (o **primeiro** usuário pode ser criado sem login e vira admin) | `{ username, password, role }` |
+| GET | `/api/logs?limit=100` | admin | Logs com descrição e IP decifrados |
+| POST | `/api/send` | sessão | `{ name: "setpoint" \| "enabled", value }`; avisa os painéis abertos |
+| GET | `/api/status` | sessão | Comandos atuais (só leitura) |
+| GET | `/api/data/latest?limit=20` | sessão | Últimas amostras, decifradas (até 2000) |
+| GET | `/api/stream` | sessão | Tempo real (Server-Sent Events): `{type:"samples", samples, commands}` e `{type:"commands", commands, by}` |
 
 ### POST /api/data
 
@@ -143,4 +158,4 @@ Os ganhos Kp e Ki **não** são enviados ao MATLAB. O estado completo é enviado
 
 Toda requisição é registrada na tabela `logs` com timestamp, IP (cifrado), descrição (cifrada) e status. A gravação acontece numa goroutine, sem atrasar a resposta.
 
-Tipos de evento: `http_request`, `http_error`, `data_received`, `data_invalid`, `influx_error`, `command_sent`.
+Tipos de evento: `http_request`, `http_error`, `data_received`, `data_invalid`, `influx_error`, `command_sent`, `login_ok`, `login_failed`, `logout`, `user_created`. Os eventos de requisições feitas com login também registram **qual usuário** fez.

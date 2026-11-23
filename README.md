@@ -2,7 +2,7 @@
 
 Sistema web para **monitorar e controlar remotamente o soprador térmico (kit LTR701)** da UNESP Sorocaba.
 
-O MATLAB roda o controle PI da temperatura a 100 Hz e troca dados com um backend em **Go** por HTTP. O backend guarda tudo **criptografado** e vai servir o dashboard do site.
+O MATLAB roda o controle PI da temperatura a 100 Hz e troca dados com um backend em **Go** por HTTP. O backend guarda tudo **criptografado** e serve o site (React), com login e um painel em tempo real em **http://localhost:3000**.
 
 **Para rodar do zero, só é preciso o Docker:**
 ```bash
@@ -42,8 +42,8 @@ docker compose up -d --build
 | Log de toda requisição (timestamp, IP, status) | ✅ funcionando |
 | Simulador da planta em Python | ✅ funcionando |
 | Script MATLAB (`cliente_planta.m`) com o kit real, a partir do script de LCON-I | ⚠️ escrito, falta testar no laboratório |
-| Login, níveis de acesso admin/usuário, `POST /api/send` | ⏳ próximo passo |
-| Frontend: formulário + dashboard em tempo real | ⏳ a fazer |
+| Login (JWT em cookie), senhas com hash PBKDF2, papéis admin/usuário, `POST /api/send` | ⚠️ testado com banco simulado; falta o primeiro `up` real |
+| Frontend React: login, painel em tempo real (SSE), comandos, administração (usuários e logs) | ⚠️ escrito; falta o primeiro build no Docker |
 | Simulação no site ("sombra digital") | ⏳ a fazer |
 | Backup diário e restauração | ⏳ a fazer |
 | Estatística descritiva (média, variância, curtose, outliers) | ⏳ a fazer |
@@ -114,7 +114,8 @@ Os ganhos Kp e Ki ficam no próprio script MATLAB e **não** vêm do site.
 │   └── cliente_planta.m        # controle PI + comunicação com o backend
 ├── simulacao/
 │   └── planta_simulada.py      # imita o MATLAB + planta, para testar sem o kit
-├── frontend/                   # (a fazer)
+├── frontend/                   # site em React + Vite — ver frontend/README.md
+│   └── src/                    # App.jsx, api.js, pages/ (Login, Dashboard, Admin), components/LiveChart.jsx
 └── docs/                       # diagramas e material do relatório
 ```
 
@@ -187,7 +188,7 @@ docker compose up -d --build
 docker compose ps
 curl.exe http://localhost:3000/api/health
 ```
-Use `curl.exe`, e não `curl`, porque no PowerShell `curl` é outro comando. Ou abra http://localhost:3000/api/health no navegador. O `.env` é criado na pasta do projeto, como no Linux.
+Use `curl.exe`, e não `curl`, porque no PowerShell `curl` é outro comando. Depois, abra **http://localhost:3000** no navegador. O `.env` é criado na pasta do projeto, como no Linux.
 
 **4. Usar**
 ```powershell
@@ -239,24 +240,29 @@ cliente_planta
 ```
 Os dois leem a `DEVICE_KEY` do `.env` da raiz automaticamente.
 
-**Comandos** (fazem o papel do site por enquanto)
+**O site: http://localhost:3000**
+- **Primeiro acesso:** como ainda não existe nenhum usuário, o site pede para **criar o administrador**. Depois disso, só um admin cadastra novos usuários (página *Administração*).
+- **Painel** (qualquer usuário logado):
+  - temperatura, setpoint, erro e sinal de controle atuais;
+  - gráficos dos últimos 120 s, atualizados em tempo real;
+  - botões para ligar e desligar o controle e para enviar o setpoint;
+  - tabela com as últimas leituras.
+- **Administração** (só admin): cadastrar usuários e ver os logs, já decifrados, com filtro por tipo de evento.
+
+**Comandos pelo terminal** (alternativa ao site, útil para testes)
 ```bash
 docker compose exec backend /backend comando setpoint 40     # entre 0 e 100 °C
 docker compose exec backend /backend comando enabled 1       # liga o controle
 docker compose exec backend /backend comando enabled 0       # desliga e zera a integral
 ```
 
-**Ver os dados**
-- No navegador: http://localhost:3000/api/data/latest?limit=5 mostra as últimas amostras, já decifradas.
-- Os logs, direto no banco:
-  ```bash
-  docker exec -it pi_postgres psql -U pi_user -d projeto_integrador \
-    -c "SELECT id, timestamp, event_type, status FROM logs ORDER BY id DESC LIMIT 10;"
-  ```
+**Ver os logs direto no banco** (descrição e IP aparecem cifrados, como devem estar)
+```bash
+docker exec -it pi_postgres psql -U pi_user -d projeto_integrador \
+  -c "SELECT id, timestamp, event_type, status FROM logs ORDER BY id DESC LIMIT 10;"
+```
 
-> Abrir só `http://localhost:3000/` mostra "Rota não encontrada". Isso é normal, porque ainda não há site, só a API em `/api/...`.
-
-**Depois de mudar o código do backend**
+**Depois de mudar o código do backend ou do frontend**
 ```bash
 docker compose up -d --build backend
 ```
@@ -285,6 +291,19 @@ go run . comando setpoint 40         # envia comando
 ```bash
 docker run --rm -u "$(id -u):$(id -g)" -e GOCACHE=/tmp/gocache -e GOMODCACHE=/tmp/gomod \
   -v "$PWD/backend-go":/src -w /src golang:1.25-alpine sh -c "go mod tidy && go test -v ./..."
+```
+
+**Frontend com recarga automática** (precisa de Node.js instalado; o backend continua no Docker em `localhost:3000`):
+```bash
+cd frontend
+npm install
+npm run dev          # abre em http://localhost:5173 e repassa /api para o backend
+```
+
+**Travar as versões do frontend** (gera o `frontend/package-lock.json`, que deve ser commitado; não precisa de Node instalado):
+```bash
+docker run --rm -u "$(id -u):$(id -g)" -e npm_config_cache=/tmp/npm -v "$PWD/frontend":/app -w /app \
+  node:22-alpine npm install --package-lock-only --no-audit --no-fund
 ```
 
 ---
@@ -341,7 +360,14 @@ Documentação completa das rotas em **[backend-go/README.md](backend-go/README.
 | GET | `/api/health` | — | estado do servidor e dos bancos |
 | POST | `/api/data` | header `X-Device-Key` | recebe lote de amostras; responde com os comandos |
 | GET | `/api/commands` | header `X-Device-Key` | comandos atuais `{ enabled, setpoint }` |
-| GET | `/api/data/latest` | *(provisório: aberta)* | últimas amostras decifradas |
+| POST | `/api/auth/login` · `/api/auth/logout` | — | entrar / sair (cookie de sessão) |
+| GET | `/api/auth/me` · `/api/auth/setup` | sessão · — | usuário atual · se falta criar o admin |
+| GET / POST | `/api/users` | admin (o 1º usuário é exceção) | listar / cadastrar usuários |
+| GET | `/api/logs` | admin | logs decifrados |
+| POST | `/api/send` | sessão | enviar comando (`enabled` ou `setpoint`) |
+| GET | `/api/status` | sessão | comandos atuais |
+| GET | `/api/data/latest` | sessão | últimas amostras decifradas |
+| GET | `/api/stream` | sessão | tempo real (Server-Sent Events) |
 
 ---
 
@@ -358,6 +384,14 @@ Documentação completa das rotas em **[backend-go/README.md](backend-go/README.
 - **Segredos gerados automaticamente**, com gerador criptográfico. O `.env` tem permissão `600`, só o seu usuário lê.
 - **Nada exposto na rede**: todas as portas estão publicadas só em `127.0.0.1`.
 - **Backend sem root e sem sistema operacional**: imagem `FROM scratch`, só com o binário, rodando como o usuário `nobody` (UID 65534).
+- **Login**:
+  - senhas guardadas só como hash **PBKDF2-HMAC-SHA256** (600 mil iterações, sal aleatório por usuário);
+  - sessão em **JWT** assinado (HS256) dentro de um cookie **HttpOnly + SameSite=Strict**: o JavaScript não lê o token (protege contra XSS), e outros sites não conseguem usá-lo (protege contra CSRF);
+  - tentativas erradas são atrasadas e registradas (`login_failed`).
+- **Dois níveis de acesso**:
+  - **admin**: cadastra usuários, vê os logs e envia comandos;
+  - **usuário**: envia parâmetros e vê os resultados.
+- **Cabeçalhos de segurança** no site: Content-Security-Policy (só scripts do próprio servidor), `X-Frame-Options`, `nosniff`.
 - **Segredos fora do Git**: o `.env` está no `.gitignore`. Nunca commite um `.env`.
 
 ---

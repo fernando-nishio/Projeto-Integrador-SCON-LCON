@@ -1,13 +1,14 @@
 package main
 
-// Rotas da API.
+// Rotas da API (as de login, usuários e logs estão em users.go).
 //
-//	GET  /api/health       -> estado do servidor e dos dois bancos
-//	POST /api/data         -> MATLAB envia um lote de amostras (exige X-Device-Key);
-//	                          a resposta já traz os comandos atuais
-//	GET  /api/commands     -> comandos atuais { enabled, setpoint } (exige X-Device-Key)
-//	GET  /api/data/latest  -> últimas amostras descriptografadas
-//	                          (TESTE: será protegida por login no passo 4)
+//	GET  /api/health       -> estado do servidor e dos dois bancos            (aberta)
+//	POST /api/data         -> MATLAB envia um lote; resposta traz os comandos (X-Device-Key)
+//	GET  /api/commands     -> comandos atuais para o MATLAB                   (X-Device-Key)
+//	POST /api/send         -> site envia um comando (setpoint / liga-desliga) (login)
+//	GET  /api/status       -> comandos atuais, para o site                    (login)
+//	GET  /api/data/latest  -> últimas amostras, decifradas                    (login)
+//	GET  /api/stream       -> tempo real (Server-Sent Events)                 (login)
 
 import (
 	"context"
@@ -24,13 +25,30 @@ func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	// Desde o Go 1.22 o próprio roteador da biblioteca padrão entende "MÉTODO /caminho"
 	mux.HandleFunc("GET /api/health", a.handleHealth)
+
+	// Dispositivo (MATLAB): autenticado pela chave no header
 	mux.HandleFunc("POST /api/data", a.requireDeviceKey(a.handlePostData))
-	mux.HandleFunc("GET /api/data/latest", a.handleLatest)
 	mux.HandleFunc("GET /api/commands", a.requireDeviceKey(a.handleCommands))
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { // qualquer outra rota
-		writeJSON(w, http.StatusNotFound, errBody("Rota não encontrada"))
-	})
-	return a.requestLogger(mux) // o log embrulha todas as rotas
+
+	// Login e usuários
+	mux.HandleFunc("GET /api/auth/setup", a.handleSetupStatus)
+	mux.HandleFunc("POST /api/auth/login", a.handleLogin)
+	mux.HandleFunc("POST /api/auth/logout", a.handleLogout)
+	mux.HandleFunc("GET /api/auth/me", a.requireAuth(a.handleMe))
+	mux.HandleFunc("POST /api/users", a.handleCreateUser) // confere admin lá dentro (1º usuário é exceção)
+	mux.HandleFunc("GET /api/users", a.requireAuth(a.handleListUsers, "admin"))
+	mux.HandleFunc("GET /api/logs", a.requireAuth(a.handleLogs, "admin"))
+
+	// Site (qualquer usuário logado: admin ou user)
+	mux.HandleFunc("POST /api/send", a.requireAuth(a.handleSend))
+	mux.HandleFunc("GET /api/status", a.requireAuth(a.handleStatus))
+	mux.HandleFunc("GET /api/data/latest", a.requireAuth(a.handleLatest))
+	mux.HandleFunc("GET /api/stream", a.requireAuth(a.handleStream))
+
+	// Todo o resto: arquivos do frontend (ou 404 em JSON para /api/...)
+	mux.Handle("/", a.staticHandler())
+
+	return securityHeaders(a.requestLogger(mux)) // log e cabeçalhos embrulham todas as rotas
 }
 
 // ---------- utilitários de resposta ----------
@@ -48,6 +66,16 @@ func errBody(msg string) map[string]string {
 // Mesmo formato do toISOString() do JavaScript: 2026-11-21T17:13:45.067Z
 func isoNow() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+// broadcast manda uma mensagem para todos os dashboards abertos (se houver).
+func (a *App) broadcast(v any) {
+	if a.hub.Count() == 0 {
+		return
+	}
+	if msg, err := json.Marshal(v); err == nil {
+		a.hub.Broadcast(msg)
+	}
 }
 
 // ---------- GET /api/health ----------
@@ -70,7 +98,7 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, code, map[string]string{"status": status, "postgres": postgres, "influxdb": influxdb, "time": isoNow()})
 }
 
-// ---------- POST /api/data ----------
+// ---------- POST /api/data (MATLAB) ----------
 
 func (a *App) handlePostData(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -104,7 +132,7 @@ func (a *App) handlePostData(w http.ResponseWriter, r *http.Request) {
 	a.logEvent(ctx, logEntry{EventType: "data_received",
 		Description: fmt.Sprintf("%s: %d amostras", lote.DeviceID, len(lote.Samples)), IP: ip, Status: 201})
 
-	state, err := a.getCommandState(ctx)
+	state, err := a.getCommandState(ctx, true)
 	if err != nil {
 		fmt.Println("[data] erro ao ler comandos:", err)
 		writeJSON(w, http.StatusInternalServerError, errBody("Erro ao ler comandos"))
@@ -116,12 +144,15 @@ func (a *App) handlePostData(w http.ResponseWriter, r *http.Request) {
 		"server_time": isoNow(),
 		"commands":    state, // { enabled, setpoint }
 	})
+
+	// Tempo real: as mesmas amostras (já gravadas cifradas) vão para os dashboards abertos
+	a.broadcast(map[string]any{"type": "samples", "device": lote.DeviceID, "samples": lote.Samples, "commands": state})
 }
 
-// ---------- GET /api/commands ----------
+// ---------- GET /api/commands (MATLAB) ----------
 
 func (a *App) handleCommands(w http.ResponseWriter, r *http.Request) {
-	state, err := a.getCommandState(r.Context())
+	state, err := a.getCommandState(r.Context(), true)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errBody("Erro ao ler comandos"))
 		return
@@ -129,17 +160,64 @@ func (a *App) handleCommands(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, state)
 }
 
-// ---------- GET /api/data/latest ----------
+// ---------- POST /api/send (site) ----------
+
+// Corpo: { "name": "setpoint", "value": 40 }  ou  { "name": "enabled", "value": 1 }
+func (a *App) handleSend(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user := reqUser(r)
+	var body struct {
+		Name  string   `json:"name"`
+		Value *float64 `json:"value"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil || body.Value == nil {
+		writeJSON(w, http.StatusBadRequest, errBody(`Formato esperado: { "name": "setpoint", "value": 40 }`))
+		return
+	}
+	if msg := validarComando(body.Name, *body.Value); msg != "" {
+		writeJSON(w, http.StatusBadRequest, errBody(msg))
+		return
+	}
+
+	id, err := a.addCommand(ctx, body.Name, *body.Value, userIDPtr(user))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errBody("Erro ao gravar o comando"))
+		return
+	}
+	a.logEvent(ctx, logEntry{EventType: "command_sent",
+		Description: fmt.Sprintf("%s=%s por %s", body.Name, formatNum(*body.Value), user.Name),
+		IP:          clientIP(r), Status: 201, UserID: userIDPtr(user)})
+
+	state, err := a.getCommandState(ctx, false)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errBody("Comando gravado, mas houve erro ao ler o estado"))
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"status": "ok", "id": id, "commands": state})
+	a.broadcast(map[string]any{"type": "commands", "commands": state, "by": user.Name})
+}
+
+// ---------- GET /api/status (site) ----------
+
+func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
+	state, err := a.getCommandState(r.Context(), false) // só lê: não marca como entregue
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errBody("Erro ao ler comandos"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"commands": state, "dashboards": a.hub.Count()})
+}
+
+// ---------- GET /api/data/latest (site) ----------
 
 var notFoundRe = regexp.MustCompile(`(?i)not found|does not exist`)
 
-// TODO (passo 4): proteger com login — dados só podem ser descriptografados para usuários autenticados
 func (a *App) handleLatest(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit < 1 {
 		limit = 20
 	}
-	limit = min(limit, 500) // inteiro de 1 a 500: seguro para colocar no SQL
+	limit = min(limit, 2000) // inteiro de 1 a 2000: seguro para colocar no SQL
 
 	rows, err := a.influx.QuerySQL(r.Context(),
 		fmt.Sprintf("SELECT * FROM %s ORDER BY time DESC LIMIT %d", measurement, limit))

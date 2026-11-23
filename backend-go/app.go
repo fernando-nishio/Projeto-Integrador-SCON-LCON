@@ -16,6 +16,7 @@ type App struct {
 	db     *pgxpool.Pool // conexões com o PostgreSQL (reaproveitadas entre requisições)
 	influx *Influx
 	crypt  *Cipher
+	hub    *Hub // distribui os dados em tempo real para os dashboards abertos
 }
 
 func newApp(ctx context.Context, cfg *Config) (*App, error) {
@@ -38,6 +39,7 @@ func newApp(ctx context.Context, cfg *Config) (*App, error) {
 		cfg:   cfg,
 		db:    pool,
 		crypt: crypt,
+		hub:   newHub(),
 		influx: &Influx{
 			base:   cfg.InfluxURL,
 			db:     cfg.InfluxDB,

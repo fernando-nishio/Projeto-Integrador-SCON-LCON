@@ -24,7 +24,9 @@ services:
   # configuração para o volume "config", lido pelos outros containers.
   # Nunca sobrescreve uma senha ou chave que já exista no .env.
   setup:
-    build: ./backend-go
+    build:
+      context: .                         # raiz: a imagem precisa de backend-go/ e frontend/
+      dockerfile: backend-go/Dockerfile
     image: projeto-integrador-backend-go
     # root (UID 0): precisa escrever no volume; depois devolve o .env ao seu usuário.
     # Na imagem FROM scratch não existe /etc/passwd, então o usuário vai por número, não por nome.
@@ -116,9 +118,12 @@ services:
     <<: *logs
 
   # ---------------------------------------------------------------------------
-  # Backend em Go (API). Imagem FROM scratch (~10 MB). Cria as tabelas do Postgres ao iniciar.
+  # Backend em Go (API + site React embutido). Imagem FROM scratch. Cria as tabelas do Postgres ao iniciar.
+  # Abra http://localhost:3000 no navegador.
   backend:
-    build: ./backend-go
+    build:
+      context: .
+      dockerfile: backend-go/Dockerfile
     image: projeto-integrador-backend-go
     container_name: pi_backend
     restart: unless-stopped

@@ -50,8 +50,9 @@ func (a *App) addCommand(ctx context.Context, name string, v float64, userID *in
 
 // getCommandState devolve o último valor de cada comando. O MATLAB recebe o estado
 // completo a cada consulta (e não só "o que mudou"): se um pacote se perder, o
-// próximo já corrige.
-func (a *App) getCommandState(ctx context.Context) (map[string]float64, error) {
+// próximo já corrige. entregue=true marca os pendentes como entregues (só quando
+// quem consulta é o dispositivo; o site só lê).
+func (a *App) getCommandState(ctx context.Context, entregue bool) (map[string]float64, error) {
 	nomes := make([]string, 0, len(comandosPadrao))
 	state := make(map[string]float64, len(comandosPadrao))
 	for k, v := range comandosPadrao {
@@ -85,6 +86,9 @@ func (a *App) getCommandState(ctx context.Context) (map[string]float64, error) {
 		return nil, err
 	}
 
+	if !entregue {
+		return state, nil
+	}
 	// Os comandos pendentes acabaram de ser entregues ao dispositivo
 	_, err = a.db.Exec(ctx, `UPDATE commands SET status = 'delivered' WHERE status = 'pending'`)
 	return state, err
