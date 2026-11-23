@@ -28,7 +28,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-SERVER = os.environ.get("SERVER", "http://localhost:3000/api")
+# 127.0.0.1 e não "localhost": no Windows, "localhost" tenta primeiro o IPv6 (::1), que o
+# Docker não atende, e cada requisição perdia ~2 s esperando antes de cair no IPv4.
+SERVER = os.environ.get("SERVER", "http://127.0.0.1:3000/api")
 DEVICE_ID = os.environ.get("DEVICE_ID", "LTR701_SIM")
 
 TS = 0.01            # período de amostragem do controle (100 Hz)
@@ -89,14 +91,15 @@ integral = 0.0
 enabled, setpoint = 0, 25.0   # até o site mandar outra coisa, controle desligado
 
 buffer = []
-lotes = falhas = 0
+lotes = falhas = atrasos = 0
 rtts = []
 k = 0
 print(f"Simulando {DEVICE_ID} -> {SERVER}  (Ctrl+C para parar)")
 print("Controle começa DESLIGADO. Ligue pelo site (http://localhost:3000) ou com:\n  docker compose exec backend /backend comando enabled 1\n")
 
 inicio = time.perf_counter()
-proximo_envio = inicio + PERIODO_ENVIO
+proximo_passo = inicio + TS              # instante do próximo passo de controle
+proximo_envio = inicio + PERIODO_ENVIO   # instante do próximo envio de lote
 
 try:
     while True:
@@ -131,8 +134,11 @@ try:
 
         # 5. Uma vez por segundo: envia o lote e recebe os comandos
         agora = time.perf_counter()
-        if agora >= proximo_envio:
+        # (só envia se houver amostras: nunca manda lote vazio)
+        if agora >= proximo_envio and buffer:
             proximo_envio += PERIODO_ENVIO
+            if proximo_envio < agora:   # muito atrasado (servidor lento): não acumula envios atrasados
+                proximo_envio = agora + PERIODO_ENVIO
             lotes += 1
             try:
                 status, resp, rtt = post_lote(buffer)
@@ -151,11 +157,17 @@ try:
             buffer = []   # lote enviado (ou perdido): começa outro
 
         # 6. Espera até o próximo passo de 10 ms
-        espera = inicio + k * TS - time.perf_counter()
+        proximo_passo += TS
+        espera = proximo_passo - time.perf_counter()
         if espera > 0:
             time.sleep(espera)
+        elif espera < -0.1:
+            # Mais de 100 ms atrasado (ex.: servidor demorou a responder): em vez de rodar
+            # dezenas de passos de uma vez para "recuperar", retoma o ritmo a partir de agora.
+            atrasos += 1
+            proximo_passo = time.perf_counter()
 except KeyboardInterrupt:
     print("\n--- Resumo ---")
-    print(f"Lotes enviados: {lotes}   falhas: {falhas}   perda: {100 * falhas / max(lotes, 1):.1f}%")
+    print(f"Lotes enviados: {lotes}   falhas: {falhas}   perda: {100 * falhas / max(lotes, 1):.1f}%   atrasos > 100 ms: {atrasos}")
     if rtts:
         print(f"RTT médio: {sum(rtts) / len(rtts):.1f} ms   mín: {min(rtts):.1f} ms   máx: {max(rtts):.1f} ms")

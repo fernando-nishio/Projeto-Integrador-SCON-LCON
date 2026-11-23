@@ -20,7 +20,9 @@ function cliente_planta()
 SIMULACAO = false;   % true = testa sem o kit (um modelo da planta substitui a placa)
 DEV_ID    = "";      % "" = encontra a NI-USB-6003 sozinho; ou force o nome, ex.: "Dev4"
 
-SERVER     = "http://localhost:3000/api";
+% 127.0.0.1 e não "localhost": no Windows, "localhost" tenta primeiro o IPv6 (::1), que o
+% Docker não atende, e cada requisição perdia ~2 s (estourando o timeout de 0,5 s).
+SERVER     = "http://127.0.0.1:3000/api";
 DEVICE_ID  = "LTR701_MATLAB";
 DEVICE_KEY = ler_device_key();
 
@@ -76,7 +78,8 @@ stats = struct('lotes', 0, 'falhas', 0, 'rtts', [], 'atrasos', 0);
 t0_ms   = posixtime(datetime('now', 'TimeZone', 'UTC')) * 1000;
 relogio = tic;
 k = 0;
-proximo_envio = PERIODO_ENVIO;
+proximo_passo = Ts;             % instante (s) do próximo passo de controle
+proximo_envio = PERIODO_ENVIO;  % instante (s) do próximo envio de lote
 
 % Ao parar (Ctrl+C ou erro): desliga os atuadores e mostra o resumo.
 % "encerrar" é uma função aninhada (no fim desta função): enxerga os valores atuais.
@@ -132,8 +135,12 @@ while true
     k = k + 1;
 
     % 6. Uma vez por segundo: envia o lote e recebe os comandos
+    % (só envia se houver amostras: nunca manda lote vazio)
     if toc(relogio) >= proximo_envio && nb > 0
         proximo_envio = proximo_envio + PERIODO_ENVIO;
+        if proximo_envio < toc(relogio)   % muito atrasado: não acumula envios atrasados
+            proximo_envio = toc(relogio) + PERIODO_ENVIO;
+        end
         stats.lotes = stats.lotes + 1;
 
         % num2cell garante que "samples" vire uma lista JSON mesmo com 1 amostra
@@ -154,12 +161,18 @@ while true
         nb = 0;   % começa outro lote (o anterior foi enviado ou perdido)
     end
 
-    % 7. Espera o próximo instante de amostragem (k * Ts)
-    espera = k * Ts - toc(relogio);
+    % 7. Espera o próximo instante de amostragem
+    proximo_passo = proximo_passo + Ts;
+    espera = proximo_passo - toc(relogio);
     if espera > 0
         pause(espera);
     else
         stats.atrasos = stats.atrasos + 1;   % passo atrasado (ex.: durante o envio)
+        if espera < -0.1
+            % Mais de 100 ms atrasado: em vez de rodar vários passos seguidos para
+            % "recuperar" (leituras quase simultâneas), retoma o ritmo a partir de agora.
+            proximo_passo = toc(relogio);
+        end
     end
 end
 

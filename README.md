@@ -433,6 +433,7 @@ docker image prune                  # apaga imagens antigas que não são mais u
 | Simulador recebe `503` logo após subir | O InfluxDB ainda está iniciando. Espere alguns segundos. |
 | Simulador recebe `401` | A `DEVICE_KEY` do `.env` mudou e o backend não foi reiniciado (`docker compose restart backend`). |
 | RTT perto de 1 s | Falta `--wal-flush-interval=100ms` no `docker-compose.yml`. |
+| RTT perto de **2 s** no Windows, dados chegando espaçados | O cliente está usando `localhost`. No Windows, ele tenta primeiro o IPv6 (`::1`), que o Docker não atende, e perde ~2 s em cada requisição. Use **`http://127.0.0.1:3000`**: o simulador e o `cliente_planta.m` já vêm assim. O navegador não tem esse problema. |
 
 ---
 
