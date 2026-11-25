@@ -181,6 +181,7 @@ func (a *App) handleSend(w http.ResponseWriter, r *http.Request) {
 
 	id, err := a.addCommand(ctx, body.Name, *body.Value, userIDPtr(user))
 	if err != nil {
+		fmt.Println("[send] erro ao gravar o comando:", err)
 		writeJSON(w, http.StatusInternalServerError, errBody("Erro ao gravar o comando"))
 		return
 	}

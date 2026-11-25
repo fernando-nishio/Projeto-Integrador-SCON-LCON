@@ -132,13 +132,25 @@ func setSessionCookie(w http.ResponseWriter, token string, maxAge int) {
 	})
 }
 
-// authenticate lê e valida o cookie de sessão da requisição.
+// authenticate lê e valida o cookie de sessão da requisição e confere no banco
+// se o usuário ainda existe. Sem essa conferência, uma sessão aberta antes de o
+// banco ser recriado (docker compose down -v) continuaria "válida" para um usuário
+// que não existe mais. O papel (admin/user) também vem do banco, então uma
+// mudança de papel vale na hora, sem esperar a sessão expirar.
 func (a *App) authenticate(r *http.Request) (*Claims, error) {
-	c, err := r.Cookie(cookieName)
+	ck, err := r.Cookie(cookieName)
 	if err != nil {
 		return nil, errors.New("faça login para continuar")
 	}
-	return a.verifyJWT(c.Value)
+	c, err := a.verifyJWT(ck.Value)
+	if err != nil {
+		return nil, err
+	}
+	err = a.db.QueryRow(r.Context(), `SELECT username, role FROM users WHERE id = $1`, c.Sub).Scan(&c.Name, &c.Role)
+	if err != nil {
+		return nil, errors.New("usuário da sessão não existe mais")
+	}
+	return c, nil
 }
 
 // requireAuth protege uma rota: exige sessão válida e, se roles for informado,
@@ -147,6 +159,7 @@ func (a *App) requireAuth(next http.HandlerFunc, roles ...string) http.HandlerFu
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := a.authenticate(r)
 		if err != nil {
+			setSessionCookie(w, "", -1) // apaga o cookie inválido do navegador
 			writeJSON(w, http.StatusUnauthorized, errBody("Sessão inválida ou expirada: faça login novamente"))
 			return
 		}
