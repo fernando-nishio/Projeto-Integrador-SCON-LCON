@@ -7,3 +7,4 @@
 *.jpg binary
 *.pdf binary
 *.mat binary
+*.glb binary

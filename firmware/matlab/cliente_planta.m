@@ -47,8 +47,9 @@ opts = weboptions( ...
 
 %% ---------------- Placa NI-USB-6003 ou simulação ----------------
 if SIMULACAO
-    % Modelo de exemplo (G(s) = 2/(s+0.4)). Troque pela função de transferência do kit.
-    planta.T = 25; planta.T_amb = 25; planta.a = 0.4; planta.b = 2;
+    % Modelo da Atividade 07 de LCON-I: G(s) = 1.387/(s + 0.2351), sem atraso
+    % (o script02 corta os 2,2 s de partida a frio). T_amb = 24,4 °C (Parte A).
+    planta.T = 24.4; planta.T_amb = 24.4; planta.a = 0.2351; planta.b = 1.387;
     dq = [];
 else
     DEV_ID = encontrar_placa(DEV_ID);

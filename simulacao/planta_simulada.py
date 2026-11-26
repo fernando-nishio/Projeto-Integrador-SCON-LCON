@@ -10,9 +10,10 @@ Faz exatamente o que o script MATLAB (firmware/matlab/cliente_planta.m) faz:
     os comandos { enabled, setpoint };
   - enabled = 0 -> controle desligado, integral zerada, aquecedor em 0 V.
 
-Planta: dT/dt = -0,4 (T - T_amb) + 2 u, ou seja, G(s) = 2/(s + 0,4) como no
-script do professor, com a temperatura ambiente como ponto de equilíbrio.
-Troque pelos parâmetros do kit do seu grupo (obtidos em LCON-I).
+Planta: dT/dt = -0,2351 (T - T_amb) + 1,387 u, ou seja, G(s) = 1,387/(s + 0,2351),
+o modelo identificado na Atividade 07 de LCON-I (ajuste de 92,77%), com a
+temperatura ambiente (24,4 °C, Parte A) como ponto de equilíbrio. Sem atraso,
+como o modelo oficial (o script02 corta os 2,2 s de partida a frio).
 
 Ao apertar Ctrl+C mostra: lotes enviados, perda (%) e RTT médio/mín/máx.
 
@@ -37,9 +38,9 @@ TS = 0.01            # período de amostragem do controle (100 Hz)
 DECIMACAO = 10       # guarda 1 a cada 10 amostras -> 10 Hz no banco
 PERIODO_ENVIO = 1.0  # envia um lote por segundo
 
-# Planta (modelo de exemplo: troque pela função de transferência do kit)
-T_AMB = 25.0
-A, B = 0.4, 2.0      # dT/dt = -A (T - T_AMB) + B u
+# Planta: modelo da Atividade 07 de LCON-I, G(s) = 1,387/(s + 0,2351)
+T_AMB = 24.4
+A, B = 0.2351, 1.387  # dT/dt = -A (T - T_AMB) + B u
 
 # Controlador e filtro: mesmos valores do script de LCON-I do grupo (script09)
 KP, KI = 1.1, 0.4

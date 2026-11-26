@@ -3,9 +3,12 @@
 // Dados em tempo real: o navegador abre /api/stream (Server-Sent Events). A cada
 // lote que o MATLAB envia (1 por segundo, amostras a 10 Hz), o backend repassa as
 // amostras para cá. Ao abrir a página, o histórico recente vem de /api/data/latest.
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { api, linhaParaAmostra } from '../api.js';
 import LiveChart from '../components/LiveChart.jsx';
+
+// O three.js é grande (~600 kB): só é baixado quando o painel abre, em arquivo separado
+const Gemeo3D = lazy(() => import('../components/Gemeo3D.jsx'));
 
 const JANELA_S = 120; // segundos exibidos nos gráficos
 const MAX_AMOSTRAS = JANELA_S * 10; // 10 amostras por segundo
@@ -138,6 +141,14 @@ export default function Dashboard() {
             <span aria-hidden="true">{ligado ? '●' : '○'}</span> {comandos ? (ligado ? 'Ligado' : 'Desligado') : '—'}
           </div>
         </div>
+      </section>
+
+      {/* Gêmeo digital: o LCD e o tubo do modelo 3D seguem a planta real */}
+      <section className="cartao" aria-labelledby="titulo-gemeo">
+        <h2 id="titulo-gemeo">Gêmeo digital</h2>
+        <Suspense fallback={<p className="muted centro">Carregando modelo 3D…</p>}>
+          <Gemeo3D amostra={ultima} online={conexao === 'conectado' && !semDados} />
+        </Suspense>
       </section>
 
       <div className="colunas">

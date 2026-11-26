@@ -44,7 +44,8 @@ docker compose up -d --build
 | Script MATLAB (`cliente_planta.m`) com o kit real, a partir do script de LCON-I | ⚠️ escrito, falta testar no laboratório |
 | Login (JWT em cookie), senhas com hash PBKDF2, papéis admin/usuário, `POST /api/send` | ⚠️ testado com banco simulado; falta o primeiro `up` real |
 | Frontend React: login, painel em tempo real (SSE), comandos, administração (usuários e logs) | ⚠️ escrito; falta o primeiro build no Docker |
-| Simulação no site ("sombra digital") | ⏳ a fazer |
+| Gêmeo digital 3D no painel: modelo do LTR701 com LCD, tubo e LED espelhando a planta | ⚠️ escrito e testado com backend simulado; falta testar com o kit |
+| Aba Simulação (modelo digital): modelo 1ª ordem + atraso com o mesmo PI do `cliente_planta.m`, métricas do degrau, reprodução do ensaio no modelo 3D e identificação dos parâmetros com dados reais | ⚠️ escrito e testado (`npm test`); planta = modelo da Ativ. 07 de LCON-I |
 | Backup diário e restauração | ⏳ a fazer |
 | Estatística descritiva (média, variância, curtose, outliers) | ⏳ a fazer |
 
@@ -115,7 +116,7 @@ Os ganhos Kp e Ki ficam no próprio script MATLAB e **não** vêm do site.
 ├── simulacao/
 │   └── planta_simulada.py      # imita o MATLAB + planta, para testar sem o kit
 ├── frontend/                   # site em React + Vite — ver frontend/README.md
-│   └── src/                    # App.jsx, api.js, pages/ (Login, Dashboard, Admin), components/LiveChart.jsx
+│   └── src/                    # App.jsx, api.js, pages/ (Login, Dashboard, Simulacao, Admin), components/ (LiveChart, Gemeo3D), sim/, gemeo/
 └── docs/                       # diagramas e material do relatório
 ```
 
@@ -316,7 +317,7 @@ O `simulacao/planta_simulada.py` faz exatamente o que o MATLAB faz:
 - saturação de 0 a 10 V;
 - amostras a 10 Hz enviadas em lote a cada 1 s.
 
-O controlador e o filtro usam os mesmos valores do kit real (Kp = 1,1, Ki = 0,4, saturação em 9,5 V). A **planta** ainda é o exemplo do professor: dT/dt = −0,4·(T − 25) + 2·u, ou seja, G(s) = 2/(s+0,4). **Troque pela função de transferência do kit** obtida em LCON-I (no simulador e no modo `SIMULACAO` do `cliente_planta.m`).
+O controlador e o filtro usam os mesmos valores do kit real (Kp = 1,1, Ki = 0,4, saturação em 9,5 V). A **planta** é o modelo identificado na Atividade 07 de LCON-I: dT/dt = −0,2351·(T − 24,4) + 1,387·u, ou seja, G(s) = 1,387/(s + 0,2351), sem atraso (o script02 corta os 2,2 s de partida a frio). É o mesmo modelo no simulador, no modo `SIMULACAO` do `cliente_planta.m` e na aba Simulação do site.
 
 Resultado esperado com `setpoint 40` e `enabled 1`: a temperatura sobe de 25 para ~40 °C em ~3 s, com u ≈ 3 V em regime (25 + 5·3 = 40). Ao parar com Ctrl+C, o simulador mostra a perda de pacotes e o RTT.
 

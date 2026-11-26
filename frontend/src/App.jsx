@@ -1,13 +1,16 @@
 // Componente principal: decide entre a tela de login e as páginas do sistema.
-// A navegação usa o "#" da URL (#/ = painel, #/admin = administração), sem biblioteca extra.
+// A navegação usa o "#" da URL (#/ = painel, #/simulacao, #/admin = administração), sem biblioteca extra.
 import { useEffect, useState } from 'react';
 import { api, quandoSessaoExpirar } from './api.js';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Admin from './pages/Admin.jsx';
+import Simulacao from './pages/Simulacao.jsx';
 
 function paginaAtual() {
-  return window.location.hash === '#/admin' ? 'admin' : 'painel';
+  if (window.location.hash === '#/admin') return 'admin';
+  if (window.location.hash === '#/simulacao') return 'simulacao';
+  return 'painel';
 }
 
 export default function App() {
@@ -58,7 +61,7 @@ export default function App() {
   }
 
   const isAdmin = user.role === 'admin';
-  const mostrar = pagina === 'admin' && isAdmin ? 'admin' : 'painel';
+  const mostrar = pagina === 'admin' ? (isAdmin ? 'admin' : 'painel') : pagina;
 
   return (
     <div className="app">
@@ -70,6 +73,9 @@ export default function App() {
         <nav className="abas">
           <a href="#/" className={mostrar === 'painel' ? 'ativa' : ''}>
             Painel
+          </a>
+          <a href="#/simulacao" className={mostrar === 'simulacao' ? 'ativa' : ''}>
+            Simulação
           </a>
           {isAdmin && (
             <a href="#/admin" className={mostrar === 'admin' ? 'ativa' : ''}>
@@ -86,7 +92,15 @@ export default function App() {
         </div>
       </header>
 
-      <main>{mostrar === 'admin' ? <Admin user={user} /> : <Dashboard user={user} />}</main>
+      <main>
+        {mostrar === 'admin' ? (
+          <Admin user={user} />
+        ) : mostrar === 'simulacao' ? (
+          <Simulacao />
+        ) : (
+          <Dashboard user={user} />
+        )}
+      </main>
     </div>
   );
 }
