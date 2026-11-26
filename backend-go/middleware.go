@@ -80,7 +80,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		h := w.Header()
 		// Só carrega scripts/estilos/conexões do próprio servidor (bloqueia injeção de scripts externos)
 		h.Set("Content-Security-Policy",
-			"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
+			"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff") // não "adivinha" o tipo de arquivo
 		h.Set("X-Frame-Options", "DENY")           // a página não pode ser embutida em outro site
 		h.Set("Referrer-Policy", "no-referrer")

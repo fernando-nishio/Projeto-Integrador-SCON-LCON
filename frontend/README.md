@@ -18,6 +18,7 @@ Em produção, o Docker compila este projeto (`npm run build`), e o resultado va
 ```
 frontend/
 ├── index.html              # página base; o React monta tudo dentro de <div id="root">
+├── public/ltr701.glb       # modelo 3D do kit (glTF binário, metros, Y para cima)
 ├── vite.config.js          # em desenvolvimento, repassa /api para o backend (porta 3000)
 ├── package.json            # dependências: react, react-dom, chart.js (+ vite para compilar)
 └── src/
@@ -26,10 +27,18 @@ frontend/
     ├── api.js              # todas as chamadas à API + conversão de horário do InfluxDB
     ├── styles.css          # visual (cores com versão clara e escura)
     ├── components/
-    │   └── LiveChart.jsx   # gráfico de linha atualizado em tempo real (Chart.js)
+    │   ├── LiveChart.jsx   # gráfico de linha atualizado em tempo real (Chart.js)
+    │   └── Gemeo3D.jsx     # gêmeo digital 3D (three.js): LCD, tubo e LED seguem a planta
+    ├── sim/
+    │   ├── modelo.js       # planta (1ª ordem + atraso) + PI/filtro iguais ao cliente_planta.m + métricas
+    │   ├── identificar.js  # ajuste de K, τ, θ e T_amb por mínimos quadrados; leitura de CSV
+    │   └── sim.test.js     # testes (npm test)
+    ├── gemeo/
+    │   └── lcdLtr701.js    # desenha a tela LCD do modelo num <canvas> usado como textura
     └── pages/
         ├── Login.jsx       # login; no primeiro acesso, cria o administrador
-        ├── Dashboard.jsx   # valores atuais, gráficos, comandos, últimas leituras
+        ├── Dashboard.jsx   # valores atuais, gêmeo 3D, gráficos, comandos, últimas leituras
+        ├── Simulacao.jsx   # modelo matemático da planta: simulação e identificação
         └── Admin.jsx       # usuários (cadastro) e logs (só admin)
 ```
 
@@ -52,3 +61,22 @@ Precisa de Node.js 20+. Com o backend rodando no Docker:
 npm install
 npm run dev     # http://localhost:5173
 ```
+
+## Aba Simulação (modelo digital)
+
+Modelo matemático do soprador, sem usar o kit:
+
+```
+            K · e^(−θs)
+   G(s) = ─────────────      T = T_amb + resposta de G ao sinal u (V)
+             τs + 1
+```
+
+- **Simulação:** discretizada a 100 Hz e com o mesmo laço do `cliente_planta.m`: ruído de leitura, filtro de Tustin, PI com integrador de Euler, saturação 0–U_MAX e os primeiros passos sem controle. Em malha fechada mostra sobressinal, tempo de subida, acomodação (2%), erro em regime e tempo saturado. Em malha aberta aplica degraus de tensão direto no aquecedor.
+- **Identificação:** ajusta `y[k+1] = a·y[k] + b·u[k−d] + c` por mínimos quadrados, testa atrasos de 0 a 5 s e converte para K, τ, θ e T_amb. O "ajuste" é medido em simulação livre (o modelo só vê u), no mesmo formato do `compare` do MATLAB. Os dados podem vir dos últimos 200 s do banco, de um CSV (`t, temp, u`) ou da própria simulação, para conferir o método.
+- **"O que o kit faria":** o modelo 3D reproduz o ensaio simulado numa linha do tempo (play/pause, barra para arrastar e velocidade de 1× a 20×). O LCD mostra os valores previstos com "SIMULACAO" no cabeçalho, o tubo muda de cor com a temperatura, e uma linha tracejada marca o mesmo instante nos gráficos. O botão "Ver o LCD" aproxima a câmera da tela (também no Painel).
+- **Parâmetros:** o padrão é o modelo da Atividade 07 de LCON-I, `G(s) = 1,387/(s + 0,2351)` (K = 5,90 °C/V, τ = 4,25 s), com T_amb = 24,4 °C. O botão "Partida a frio" acrescenta o atraso de 2,2 s medido no ensaio, que o script02 cortou antes do ajuste, para ver o pior caso. "Usar estes parâmetros" (identificação) salva no navegador (localStorage).
+
+Para identificar o kit: com o controle ligado, mude o setpoint algumas vezes (ex.: 35 → 50 → 40 °C, esperando estabilizar entre as mudanças) e clique em "Últimos 200 s da planta". Um ajuste acima de ~90% indica um bom modelo.
+
+Testes: `npm test` (Node 20+, sem dependências).

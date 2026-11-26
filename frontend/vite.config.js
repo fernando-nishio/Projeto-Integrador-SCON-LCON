@@ -10,5 +10,7 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    // O Gemeo3D (three.js) fica num arquivo separado de ~590 kB, baixado só quando o painel abre
+    chunkSizeWarningLimit: 700,
   },
 });

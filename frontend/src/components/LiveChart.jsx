@@ -3,13 +3,35 @@
 // series: [{ label, cor: 'series-1', pontos: [{ x, y }] }]
 //   - "cor" é o nome de uma variável CSS (definida em styles.css, com versão para
 //     modo claro e escuro), então o gráfico acompanha o tema do sistema.
-//   - x = segundos em relação à amostra mais recente (−120 … 0).
+//   - x = segundos em relação à amostra mais recente (−120 … 0), ou o tempo do
+//     ensaio na aba Simulação (eixoX troca o título do eixo).
 import { useEffect, useRef } from 'react';
 import Chart from 'chart.js/auto';
 
 function cssVar(nome) {
   return getComputedStyle(document.documentElement).getPropertyValue(`--${nome}`).trim();
 }
+
+// Linha vertical opcional (cursor de tempo), usada pela linha do tempo da aba Simulação
+const pluginCursor = {
+  id: 'cursor',
+  afterDatasetsDraw(chart) {
+    const x = chart.options.plugins.cursor?.x;
+    if (x === null || x === undefined) return;
+    const { ctx, chartArea, scales } = chart;
+    const px = scales.x.getPixelForValue(x);
+    if (px < chartArea.left || px > chartArea.right) return;
+    ctx.save();
+    ctx.strokeStyle = cssVar('text-secondary');
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(px, chartArea.top);
+    ctx.lineTo(px, chartArea.bottom);
+    ctx.stroke();
+    ctx.restore();
+  },
+};
 
 function aplicarTema(chart, series) {
   const texto = cssVar('text-secondary');
@@ -28,7 +50,15 @@ function aplicarTema(chart, series) {
   chart.options.plugins.legend.labels.color = texto;
 }
 
-export default function LiveChart({ series, unidade, titulo, casas = 2, altura = 240 }) {
+export default function LiveChart({
+  series,
+  unidade,
+  titulo,
+  casas = 2,
+  altura = 240,
+  eixoX = 'tempo (s) — 0 = agora',
+  cursorX = null,
+}) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
@@ -36,6 +66,7 @@ export default function LiveChart({ series, unidade, titulo, casas = 2, altura =
   useEffect(() => {
     const chart = new Chart(canvasRef.current, {
       type: 'line',
+      plugins: [pluginCursor],
       data: {
         datasets: series.map((s) => ({
           label: s.label,
@@ -56,7 +87,7 @@ export default function LiveChart({ series, unidade, titulo, casas = 2, altura =
         scales: {
           x: {
             type: 'linear',
-            title: { display: true, text: 'tempo (s) — 0 = agora' },
+            title: { display: true, text: eixoX },
             ticks: { maxTicksLimit: 7 },
           },
           y: {
@@ -65,6 +96,7 @@ export default function LiveChart({ series, unidade, titulo, casas = 2, altura =
           },
         },
         plugins: {
+          cursor: { x: cursorX },
           legend: { display: series.length > 1, position: 'top', align: 'end', labels: { boxWidth: 12, boxHeight: 2 } },
           tooltip: {
             callbacks: {
@@ -102,6 +134,14 @@ export default function LiveChart({ series, unidade, titulo, casas = 2, altura =
     });
     chart.update('none');
   }, [series]);
+
+  // Cursor de tempo: só redesenha (sem recalcular escalas)
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.options.plugins.cursor.x = cursorX;
+    chart.draw();
+  }, [cursorX]);
 
   return (
     <figure className="grafico">
